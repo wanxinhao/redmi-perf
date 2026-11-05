@@ -70,7 +70,7 @@ sudo apt install dkms build-essential linux-headers-$(uname -r) cargo
 ### 一、EC 性能模式
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USERNAME/redmi-perf.git
+git clone https://github.com/wanxinhao/redmi-perf.git
 cd redmi-perf
 
 # 推荐：走 DKMS，内核升级后自动重编
