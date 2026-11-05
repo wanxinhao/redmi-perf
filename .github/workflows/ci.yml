@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kernel-module:
+    name: build kernel module
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential linux-headers-generic
+          KVER="$(ls /lib/modules | grep -E '^[0-9].*-generic$' | sort -V | tail -1)"
+          echo "KVER=$KVER" >>"$GITHUB_ENV"
+          echo "building for kernel $KVER"
+
+      - name: Build module
+        run: make -C "/lib/modules/$KVER/build" M="$PWD/kernel/redmi-perf-wmi" modules
+
+      - name: Check module info
+        run: |
+          modinfo kernel/redmi-perf-wmi/redmi_perf_wmi.ko | head -20
+
+  cli:
+    name: build CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Build
+        run: cargo build --release --manifest-path cli/Cargo.toml
+      - name: Run
+        run: cli/target/release/redmi-perf help
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          # shellcheck 的退出码非 0 会让 job 失败，这里只报告不阻塞
+          find . -name '*.sh' -not -path './.git/*' -print0 |
+            xargs -0 shellcheck -S warning || true

@@ -1,0 +1,84 @@
+name: 问题反馈
+description: 报告 redmi-perf / nvpcf-shim 的问题
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！**请先确认问题是否与机型有关** —— 不同固件行为差异很大。
+
+  - type: input
+    id: model
+    attributes:
+      label: 机型
+      placeholder: "Redmi G Pro 2024"
+    validations:
+      required: true
+
+  - type: textarea
+    id: dmi
+    attributes:
+      label: 硬件与固件信息
+      description: 请粘贴下面命令的输出
+      render: shell
+      value: |
+        sudo dmidecode -s system-product-name
+        sudo dmidecode -s bios-version
+        uname -r
+        cat /etc/os-release | head -2
+        nvidia-smi --query-gpu=driver_version --format=csv,noheader
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 出问题的组件
+      options:
+        - redmi-perf 内核模块
+        - redmi-perf 命令行工具
+        - nvpcf-shim（NVIDIA 驱动补丁）
+        - 安装脚本
+        - 不确定
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 完整的命令序列，以及期望结果 vs 实际结果
+      value: |
+        1.
+        2.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: |
+        性能模式相关：
+        ```
+        sudo dmesg | grep -i redmi_perf
+        ```
+
+        nvpcf-shim 相关：
+        ```
+        sudo dmesg | grep -iE 'NVPCF-SHIM|SBIOS'
+        ```
+    validations:
+      required: false
+
+  - type: textarea
+    id: probe
+    attributes:
+      label: 固件探测输出
+      description: 如果固件行为和别的机器不一样，贴一下这个
+      render: shell
+      value: |
+        sudo ./scripts/probe.sh
+    validations:
+      required: false

@@ -1,0 +1,31 @@
+# ---- 内核模块构建产物 ----
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+.*.cmd
+.*.o
+modules.order
+Module.symvers
+.tmp_versions/
+*.symvers
+*.order
+
+# ---- Rust ----
+/cli/target/
+/target/
+
+# ---- NVPCF shim ----
+# NVIDIA 驱动源码副本（很大，不进仓库）
+/nvpcf-shim/build/
+# 编译好的内核模块（放 GitHub Release，不进仓库）
+/nvpcf-shim/prebuilt/
+
+# ---- 杂项 ----
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+*.swp
+*~
