@@ -1,0 +1,90 @@
+_message() {
+  printf '%s\n' \
+    '' \
+    'The redmi_perf_wmi kernel module is built by DKMS for each installed' \
+    'kernel and is loaded automatically at boot.' \
+    '' \
+    'Kernel headers are required for every kernel you boot (dkms lists them' \
+    'as optional dependencies), for example:' \
+    '' \
+    '    sudo pacman -S linux-headers' \
+    '' \
+    'Load the module now with:' \
+    '' \
+    '    sudo modprobe redmi_perf_wmi' \
+    '' \
+    'If /sys/class/redmi_perf is missing, the in-tree bitland-mifs-wmi' \
+    'driver may have claimed the MiInterface WMI device. Rebind it:' \
+    '' \
+    '    echo B60BFB48-3E5B-49E4-A0E9-8CFFE1B3434B-4 | \' \
+    '      sudo tee /sys/bus/wmi/drivers/bitland-mifs-wmi/unbind' \
+    '    sudo modprobe redmi_perf_wmi' \
+    '' \
+    'The NVPCF shim for NVIDIA kernel modules is not installed by this' \
+    'package. See docs/arch-linux.md in the upstream repository.' \
+    ''
+}
+
+# 提示从"手动脚本安装"迁移过来时可能残留的东西。包不主动删除这些文件，
+# 但它们会影响包的行为（PATH 遮蔽、重复 DKMS 版本、旧模块抢占）。
+_legacy_hint() {
+  if [ -e /usr/local/bin/redmi-perf ]; then
+    printf '%s\n' \
+      'WARNING: a manually installed CLI is still present at' \
+      '         /usr/local/bin/redmi-perf. It usually shadows the packaged' \
+      '         /usr/bin/redmi-perf. Remove it with:' \
+      '           sudo /path/to/redmi-perf/scripts/install-redmi-perf.sh --uninstall'
+  fi
+
+  _trees=$(find /usr/src -maxdepth 1 -type d -name 'redmi-perf-*' 2>/dev/null | wc -l)
+  if [ "$_trees" -gt 1 ]; then
+    printf '%s\n' \
+      'WARNING: multiple /usr/src/redmi-perf-* source trees found (probably a' \
+      '         left-over manual install). Kernel upgrades may build the module' \
+      '         twice. Remove the old one with:' \
+      '           sudo /path/to/redmi-perf/scripts/install-redmi-perf.sh --uninstall'
+  fi
+
+  if ls /usr/lib/modules/*/extra/redmi_perf_wmi.ko* >/dev/null 2>&1; then
+    printf '%s\n' \
+      'WARNING: an old non-DKMS redmi_perf_wmi.ko exists under' \
+      '         /usr/lib/modules/*/extra/. Remove it with:' \
+      '           sudo /path/to/redmi-perf/scripts/install-redmi-perf.sh --uninstall'
+  fi
+
+  if [ -e /etc/modules-load.d/redmi-perf.conf ]; then
+    printf '%s\n' \
+      'NOTE: /etc/modules-load.d/redmi-perf.conf was created by a previous' \
+      '      manual install. It duplicates the packaged' \
+      '      /usr/lib/modules-load.d/redmi-perf.conf and is harmless.'
+  fi
+}
+
+post_install() {
+  _message
+  _legacy_hint
+}
+
+post_upgrade() {
+  _message
+  _legacy_hint
+}
+
+pre_remove() {
+  printf '%s\n' \
+    '' \
+    'The redmi_perf_wmi module may still be loaded. Unload it with:' \
+    '' \
+    '    sudo modprobe -r redmi_perf_wmi' \
+    '' \
+    'Files created by an older manual install are not removed by pacman:' \
+    '' \
+    '    /usr/local/bin/redmi-perf' \
+    '    /usr/src/redmi-perf-* (non-package versions)' \
+    '    /etc/modules-load.d/redmi-perf.conf' \
+    '' \
+    'To clean those up run:' \
+    '' \
+    '    sudo /path/to/redmi-perf/scripts/install-redmi-perf.sh --uninstall' \
+    ''
+}

@@ -12,6 +12,7 @@ use std::process::ExitCode;
 
 const SYSFS: &str = "/sys/class/redmi_perf";
 const PARAMS: &str = "/sys/module/redmi_perf_wmi/parameters";
+const MIFS_GUID: &str = "B60BFB48-3E5B-49E4-A0E9-8CFFE1B3434B";
 
 const USAGE: &str = "\
 redmi-perf - Xiaomi platform performance mode control
@@ -62,9 +63,71 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("error: {err}");
+            print_binding_hint();
             ExitCode::FAILURE
         }
     }
+}
+
+/// Explain the most common setup failure: the module is loaded, but the
+/// MiInterface WMI device is bound to another driver (on newer kernels the
+/// in-tree `bitland-mifs-wmi` claims the same GUID), so the module's probe
+/// never runs and /sys/class/redmi_perf never appears.
+fn print_binding_hint() {
+    use std::path::Path;
+
+    if Path::new(SYSFS).exists() {
+        return;
+    }
+
+    if !Path::new("/sys/module/redmi_perf_wmi").exists() {
+        eprintln!(
+            "\nhint: redmi_perf_wmi is not loaded. Load it with:\n  sudo modprobe redmi_perf_wmi"
+        );
+        return;
+    }
+
+    let Some((dev, driver)) = mifs_device_and_driver() else {
+        eprintln!(
+            "\nhint: redmi_perf_wmi is loaded but {SYSFS} is missing and no MiInterface WMI device was found.\nCheck: sudo dmesg | grep redmi_perf"
+        );
+        return;
+    };
+
+    if driver == "redmi_perf" {
+        eprintln!(
+            "\nhint: the MiInterface device is bound to redmi_perf, but {SYSFS} is missing; check dmesg."
+        );
+        return;
+    }
+
+    if driver.is_empty() {
+        eprintln!(
+            "\nhint: the MiInterface device {dev} is not bound. Bind it with:\n  echo {dev} | sudo tee /sys/bus/wmi/drivers/redmi_perf/bind"
+        );
+        return;
+    }
+
+    eprintln!(
+        "\nhint: the MiInterface WMI device is bound to '{driver}', so redmi_perf_wmi never probes.\n\
+         Rebind it with:\n  echo {dev} | sudo tee /sys/bus/wmi/drivers/{driver}/unbind\n  sudo modprobe redmi_perf_wmi"
+    );
+}
+
+fn mifs_device_and_driver() -> Option<(String, String)> {
+    let entries = fs::read_dir("/sys/bus/wmi/devices").ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with(MIFS_GUID) {
+            continue;
+        }
+        let driver = fs::read_link(entry.path().join("driver"))
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        return Some((name, driver));
+    }
+    None
 }
 
 fn read_attr(name: &str) -> Result<String, String> {

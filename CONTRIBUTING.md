@@ -6,7 +6,7 @@
 kernel/redmi-perf-wmi/    内核模块（C）
 cli/                      用户态命令行工具（Rust）
 nvpcf-shim/               NVIDIA 驱动补丁（C 片段 + Python 补丁器）
-scripts/                  安装与诊断脚本
+scripts/                  安装与诊断脚本（scripts/lib/common.sh 是发行版探测）
 tools/                    逆向分析工具
 docs/                     文档
 ```
@@ -21,7 +21,9 @@ docs/                     文档
 - **不要**在模块里做可能睡眠或加锁太久的操作 —— 这是热路径；
 - 新增可调参数一律用 `module_param_named(..., 0644)`，让用户能在线改、
   不用重编；
-- 提交前至少在两个内核版本上编译通过。
+- 提交前至少在两个内核版本上编译通过；
+- 新代码不能假设 gcc：Arch 的 CachyOS 内核是 clang + ThinLTO，
+  `scripts/lib/common.sh` 会自动给出 `LLVM=1 LD=ld.lld`，别写死编译器。
 
 ## NVPCF 补丁的规矩
 
@@ -36,9 +38,17 @@ docs/                     文档
 ## 提交前自检
 
 ```bash
+# 内核模块（clang 内核会自动带 LLVM=1 LD=ld.lld）
+./scripts/install-redmi-perf.sh --check
 make -C /lib/modules/$(uname -r)/build M=$PWD/kernel/redmi-perf-wmi modules
-cargo build --release --manifest-path cli/Cargo.toml
-shellcheck scripts/*.sh nvpcf-shim/*.sh
+
+# 命令行工具
+cargo build --release --offline --manifest-path cli/Cargo.toml
+
+# 脚本 / 补丁器
+shellcheck scripts/*.sh scripts/lib/*.sh nvpcf-shim/*.sh
+python3 -m py_compile nvpcf-shim/patch_nv_acpi.py nvpcf-shim/unpatch_nv_acpi.py
+./nvpcf-shim/install.sh --check    # 需要装了 NVIDIA 源码包
 ```
 
 ## 报告硬件差异

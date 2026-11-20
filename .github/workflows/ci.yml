@@ -31,6 +31,45 @@ jobs:
         run: |
           modinfo kernel/redmi-perf-wmi/redmi_perf_wmi.ko | head -20
 
+  kernel-module-arch:
+    name: build kernel module (Arch)
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm git base-devel linux linux-headers dkms zstd python
+      - uses: actions/checkout@v4
+
+      - name: Build module
+        run: |
+          KVER="$(ls /usr/lib/modules | head -1)"
+          echo "building for kernel $KVER"
+          make -C "/usr/lib/modules/$KVER/build" M="$PWD/kernel/redmi-perf-wmi" modules
+
+      - name: Check module info
+        run: modinfo kernel/redmi-perf-wmi/redmi_perf_wmi.ko | head -10
+
+      - name: Distribution detection / --check
+        run: |
+          KVER="$(ls /usr/lib/modules | head -1)" ./scripts/install-redmi-perf.sh --check
+
+      - name: Validate pacman hook operations
+        run: |
+          # pacman 只认 Install / Upgrade / Remove，写错会让 pacman 事务直接报错
+          ! grep -E '^[[:space:]]*Operation[[:space:]]*=' nvpcf-shim/arch/nvpcf-shim.hook |
+            sed -e 's/^[[:space:]]*Operation[[:space:]]*=[[:space:]]*//' -e 's/[[:space:]]*$//' |
+            grep -vxE 'Install|Upgrade|Remove'
+
+      - name: PKGBUILD syntax
+        run: |
+          bash -n packaging/arch/redmi-perf-git/PKGBUILD
+          bash -n packaging/arch/redmi-perf-git/redmi-perf-dkms-git.install
+
+      - name: Python patch tooling syntax
+        run: |
+          python3 -m py_compile nvpcf-shim/patch_nv_acpi.py nvpcf-shim/unpatch_nv_acpi.py
+
   cli:
     name: build CLI
     runs-on: ubuntu-latest

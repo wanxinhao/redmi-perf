@@ -14,6 +14,18 @@ sudo ./scripts/install-redmi-perf.sh --dkms
 
 不带 `--dkms` 则只对当前内核生效。
 
+### Arch Linux
+
+```bash
+sudo pacman -S --needed base-devel dkms zstd \
+    linux-headers            # 按实际内核换成 linux-lts-headers / linux-cachyos-*-headers
+sudo ./scripts/install-redmi-perf.sh --dkms
+```
+
+CachyOS 等 clang + ThinLTO 内核不需要手工加参数：脚本会自动用
+`LLVM=1 LD=ld.lld` 编译，DKMS 3.x 也会自动追加 `LLVM=1`。
+详见 [../../docs/arch-linux.md](../../docs/arch-linux.md)。
+
 ## sysfs 接口
 
 `/sys/class/redmi_perf/redmi_perf/`：

@@ -1,0 +1,18 @@
+[Trigger]
+# pacman 只接受 Install / Upgrade / Remove 三种 Operation
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = nvidia-open-dkms
+Target = nvidia-dkms
+Target = nvidia-open
+Target = nvidia-open-lts
+Target = nvidia-open-beta
+Target = nvidia
+Target = nvidia-lts
+Target = nvidia-utils
+
+[Action]
+Description = NVPCF shim: restoring official NVIDIA modules after driver change
+When = PostTransaction
+Exec = /usr/local/lib/nvpcf-shim/on-nvidia-upgrade.sh

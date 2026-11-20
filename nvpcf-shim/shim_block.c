@@ -38,6 +38,8 @@ static unsigned int nvpcf_shim_ppm_enable = 0; /* 1 = 给 counter 0x13 打上"�
 static unsigned int nvpcf_shim_ctr0b = 0;  /* 覆盖 GPS counter 0x0b 的值, 0 = 保持原值 */
 static unsigned int nvpcf_shim_fallback = 1; /* 硬编码路径失败时用命名空间句柄重试 */
 static unsigned int nvpcf_shim_rev = 0;   /* 非 0: 强制改写 DSM revision */
+static unsigned int nvpcf_shim_pshare_init = 1; /* 1 = 初始化窗口内清掉 PShareStatus 的 UPDATE_LIMIT */
+static NvBool nvpcf_shim_pshare_init_window = NV_FALSE; /* 已看到 GPS support、还没看到 PSHAREPARAMS */
 
 module_param_named(nvpcf_shim_log,   nvpcf_shim_log,   uint, 0644);
 module_param_named(nvpcf_shim_mode,  nvpcf_shim_mode,  uint, 0644);
@@ -50,6 +52,7 @@ module_param_named(nvpcf_shim_ppm_enable, nvpcf_shim_ppm_enable, uint, 0644);
 module_param_named(nvpcf_shim_ctr0b, nvpcf_shim_ctr0b, uint, 0644);
 module_param_named(nvpcf_shim_fallback, nvpcf_shim_fallback, uint, 0644);
 module_param_named(nvpcf_shim_rev,   nvpcf_shim_rev,   uint, 0644);
+module_param_named(nvpcf_shim_pshare_init, nvpcf_shim_pshare_init, uint, 0644);
 
 MODULE_PARM_DESC(nvpcf_shim_log,   "NVPCF shim: 记录 DSM 流量 (0/1)");
 MODULE_PARM_DESC(nvpcf_shim_mode,  "NVPCF shim: 0=只记录 1=改写应答");
@@ -62,6 +65,7 @@ MODULE_PARM_DESC(nvpcf_shim_ppm_enable, "NVPCF shim: 给 GPS 支持应答打开 
 MODULE_PARM_DESC(nvpcf_shim_ctr0b, "NVPCF shim: 覆盖 GPS counter 0x0b 的值, 0=保持原值");
 MODULE_PARM_DESC(nvpcf_shim_fallback, "NVPCF shim: 用 ACPI 命名空间句柄重试 (0/1)");
 MODULE_PARM_DESC(nvpcf_shim_rev,   "NVPCF shim: 强制 DSM revision (0=保持原样)");
+MODULE_PARM_DESC(nvpcf_shim_pshare_init, "NVPCF shim: 初始化窗口内清 UPDATE_LIMIT pending (0/1)");
 
 /* 把缓冲区打成一行十六进制，方便 grep 一次抓到（分多行会被过滤掉） */
 static void nvpcf_shim_hexdump(const char *tag, const NvU8 *buf, NvU16 len)
@@ -310,6 +314,49 @@ static void nvpcf_shim_rewrite(NvU32 acpiDsmSubFunction,
         return;
     if (out == NULL || pSize == NULL || *pSize == 0)
         return;
+
+    /* ===== 初始化窗口：清掉 PShareStatus 的 UPDATE_LIMIT pending =====
+     *
+     * nvidia-open 620 的 pfmreqhndlrInitSensors 顺序是：
+     *   1. GPS support (0x0)
+     *   2. PSHARESTATUS (0x20)
+     *   3. PSHAREPARAMS (0x2a) <- 到这里才把 TGPU/PPMD 计数器标记为可用
+     *
+     * 如果第 2 步的应答里 UPDATE_LIMIT = PENDING，驱动会立刻去更新
+     * target temp / platform power mode，但此时第 3 步还没发生、计数器
+     * 未初始化，pfmreqhndlrGetPerfSensorCounterById 返回 NV_ERR_INVALID_DATA，
+     * 于是每次开机抛两条 "failed to get ... from SBIOS" 断言。
+     *
+     * 这里只在初始化窗口（0x0 之后、首个 0x2a 之前）清掉这个 pending 位，
+     * 让驱动跳过这次超前更新；运行期的 0x20 不动，平台限制更新仍然生效。
+     */
+    if (nvpcf_shim_pshare_init && !acpiNvpcfDsmFunction &&
+        nvpcf_shim_guid_is(pAcpiDsmGuid, nvpcf_shim_gps_guid))
+    {
+        switch (acpiDsmSubFunction)
+        {
+            case 0x00:
+                nvpcf_shim_pshare_init_window = NV_TRUE;
+                break;
+            case 0x20:
+                if (nvpcf_shim_pshare_init_window && *pSize >= 4)
+                {
+                    NvU32 v = nvpcf_shim_get32(out);
+                    if (v & 0x1u)
+                    {
+                        nvpcf_shim_put32(out, v & ~0x1u);
+                        pr_err("NVPCF-SHIM: init window: PShareStatus UPDATE_LIMIT pending 0x%x -> 0x%x\n",
+                               v, v & ~0x1u);
+                    }
+                }
+                break;
+            case 0x2a:
+                nvpcf_shim_pshare_init_window = NV_FALSE;
+                break;
+            default:
+                break;
+        }
+    }
 
     /* NVPCF func 0x2 = 动态功耗表 */
     if (acpiNvpcfDsmFunction && acpiDsmSubFunction == 0x02)

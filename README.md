@@ -6,8 +6,11 @@
 Windows 上用「小米控制中心 / GCommandCenter」能一键切性能模式、满速风扇、
 拉高 GPU TGP；Linux 下这些全都摸不到。这个项目把那条通道重建出来。
 
-> **状态**：可用。已在 Redmi G Pro 2024（TM2211）+ Ubuntu 26.04 + 内核 7.0.0-42
-> + NVIDIA 595.112.07 上验证。
+> **状态**：可用。
+> 已在 Redmi G Pro 2024（TM2211）+ Ubuntu 26.04 + 内核 7.0.0-42 +
+> NVIDIA 595.112.07 上验证；Arch Linux + 内核 7.3.0（clang/LTO）+
+> nvidia-open-dkms 620.73.04 上已完成**运行时验证**：两条 SBIOS 断言消失，
+> EC 模式与功耗上限切换正常（见 [docs/arch-linux.md](docs/arch-linux.md)）。
 
 ## 效果
 
@@ -54,18 +57,29 @@ NVRM: GPU0 nvAssertOkFailedNoLog: Assertion failed: Invalid data passed [NV_ERR_
 kernel/redmi-perf-wmi/    EC 性能模式内核模块（C，DKMS）
 cli/                      redmi-perf 命令行工具（Rust）
 nvpcf-shim/               NVIDIA NVPCF ACPI 应答补丁（C + Python）
-scripts/                  安装与诊断脚本
+scripts/                  安装与诊断脚本（scripts/lib/ 是发行版探测）
 tools/                    逆向分析工具
-docs/                     逆向笔记与排错
+docs/                     逆向笔记、Arch 适配与排错
 ```
 
 ## 安装
 
 ### 前置
 
+脚本会自动识别发行版并给出对应的安装命令。手动装的话：
+
 ```bash
+# Arch / CachyOS / Manjaro：内核头文件按实际内核选，见 docs/arch-linux.md
+sudo pacman -S --needed base-devel dkms zstd python rust \
+    linux-headers
+
+# Debian / Ubuntu
 sudo apt install dkms build-essential linux-headers-$(uname -r) cargo
 ```
+
+> Arch 上的 CachyOS 内核是 clang + ThinLTO 构建的，脚本会自动加
+> `LLVM=1 LD=ld.lld`；DKMS 3.x 也会自己追加 `LLVM=1`。详见
+> [docs/arch-linux.md](docs/arch-linux.md)。
 
 ### 一、EC 性能模式
 
@@ -77,6 +91,17 @@ cd redmi-perf
 sudo ./scripts/install-redmi-perf.sh --dkms
 ```
 
+Arch 用户可以直接跑同一条命令（自动走 pacman / DKMS）；先用
+`./scripts/install-redmi-perf.sh --check` 看缺什么包。
+
+也可以走打包安装（CLI + DKMS 模块两个包）：
+
+```bash
+cd packaging/arch/redmi-perf-git && makepkg -si
+```
+
+见 [packaging/arch/README.md](packaging/arch/README.md)。
+
 ### 二、NVPCF 断言修复（可选）
 
 > ⚠ **这一步会替换内核里的 nvidia 模块。装坏了会开不了机。**
@@ -85,6 +110,7 @@ sudo ./scripts/install-redmi-perf.sh --dkms
 
 ```bash
 cd redmi-perf/nvpcf-shim
+./install.sh --check           # 先看能不能打（源码布局 / 编译参数 / 备份来源）
 sudo ./install.sh              # 打补丁 + 编译 + 安装
 sudo reboot
 
@@ -92,10 +118,22 @@ sudo reboot
 sudo dmesg | grep -iE 'NVPCF-SHIM|SBIOS'   # 应该没有 NVRM 断言
 ```
 
+需要 NVIDIA **内核模块源码**：
+
+- Arch：装 `nvidia-open-dkms`（源码包）；预编译的 `nvidia-open` 没有源码，
+  不能打 shim；
+- Ubuntu / Debian：`nvidia-dkms-*` 或 `nvidia-installer --dkms`。
+
+Arch 上安装脚本还会顺带装一个 pacman 钩子：`nvidia-open-dkms` /
+`nvidia-utils` 升级后自动回退到官方模块，避免内核模块与用户态库版本错配。
+详见 [docs/arch-linux.md](docs/arch-linux.md)。
+
 ### 三、开机自启
 
+`scripts/install-redmi-perf.sh` 已自动写入
+`/etc/modules-load.d/redmi-perf.conf`（开机加载模块），这里只需要开功耗服务：
+
 ```bash
-echo redmi_perf_wmi | sudo tee /etc/modules-load.d/redmi-perf.conf
 sudo systemctl enable --now nvidia-powerd.service
 ```
 
@@ -132,6 +170,15 @@ sudo ./scripts/bench.sh                 # 依次测所有模式
 sudo ./scripts/bench.sh quiet turbo     # 只测指定模式
 ```
 
+## 支持环境
+
+| 项目 | 状态 |
+|---|---|
+| Ubuntu 26.04 + 内核 7.0.0-42 + NVIDIA 595.112.07（.run / nvidia-dkms） | ✅ 已验证（运行时） |
+| Arch Linux + 内核 7.3.0（clang + ThinLTO）+ nvidia-open-dkms 620.73.04 | ✅ 已验证（运行时：断言消失，90/125/140W） |
+| Arch 预编译 `nvidia-open`（无源码） | ⚠ 只有 EC 性能模式，不能打 shim |
+| 闭源 `nvidia` / `nvidia-dkms`（Arch） | ❓ 布局有兼容分支，未验证 |
+
 ## 支持机型
 
 | 机型 | DMI | 状态 |
@@ -150,6 +197,7 @@ sudo ./scripts/bench.sh quiet turbo     # 只测指定模式
 - **`nvpcf-shim`**：替换 NVIDIA 内核模块。改的是 ACPI 应答缓冲区，
   逻辑上是「补齐固件少给的字节」，但万一写错会让驱动拿到非法值。
   万一开不了机，见 [docs/troubleshooting.md](docs/troubleshooting.md)。
+  Arch 上需要源码包 `nvidia-open-dkms`；预编译的 `nvidia-open` 不能打补丁。
 
 ## 回退
 
@@ -161,14 +209,17 @@ sudo ./scripts/install-redmi-perf.sh --uninstall
 sudo ./nvpcf-shim/restore-prebuilt.sh && sudo reboot
 ```
 
-`restore-prebuilt.sh` 会从 DKMS 自己的 build 产物里取**原版**模块装回去，
-并删掉 `/etc/modprobe.d/nvidia-nvpcf-shim.conf`。
+`restore-prebuilt.sh` 会从 DKMS 自己的 build 产物里取**原版**模块装回去
+（版本必须与当前驱动一致），清掉所有目录里的 shim 模块，并删掉
+`/etc/modprobe.d/nvidia-nvpcf-shim.conf`、Arch 的 pacman 钩子和辅助脚本。
 
 ## 文档
 
 - [docs/reverse-engineering.md](docs/reverse-engineering.md) —— MIFS WMI 协议与
   NVPCF / GPS counter 的逆向笔记（协议细节都在这）
 - [docs/supported-models.md](docs/supported-models.md) —— 机型与模式编码
+- [docs/arch-linux.md](docs/arch-linux.md) —— **Arch Linux + nvidia-open 适配**
+  （依赖、clang 内核、驱动升级钩子、恢复流程）
 - [docs/troubleshooting.md](docs/troubleshooting.md) —— 排错与灾难恢复
 
 ## 致谢

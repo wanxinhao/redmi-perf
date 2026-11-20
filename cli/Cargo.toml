@@ -1,6 +1,6 @@
 [package]
 name = "redmi-perf"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Control the Xiaomi MIFS platform performance mode on Redmi G / RedmiBook"
 license = "GPL-2.0-only"

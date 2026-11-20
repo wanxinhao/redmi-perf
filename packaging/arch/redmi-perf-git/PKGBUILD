@@ -1,0 +1,80 @@
+# Maintainer: BiHai <guohaomin1300@outlook.com>
+# Upstream: https://github.com/wanxinhao/redmi-perf
+#
+# VCS package for the redmi-perf CLI and the redmi_perf_wmi DKMS module.
+#
+# The NVPCF shim (nvpcf-shim/) is intentionally NOT packaged: it replaces
+# the NVIDIA kernel modules with locally patched ones, which is not
+# something a package manager should do. See docs/arch-linux.md.
+
+_pkgbase=redmi-perf
+_repo="https://github.com/wanxinhao/redmi-perf.git"
+pkgbase="${_pkgbase}-git"
+pkgname=("${_pkgbase}-git" "${_pkgbase}-dkms-git")
+pkgver=r3.8941a19
+pkgrel=1
+arch=('x86_64')
+url="https://github.com/wanxinhao/redmi-perf"
+license=('GPL-2.0-only')
+makedepends=('git' 'cargo')
+source=("${pkgbase}::git+${_repo}")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$pkgbase"
+  ( set -o pipefail
+    git describe --long --tags --abbrev=7 2>/dev/null |
+      sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' ||
+      printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+  )
+}
+
+prepare() {
+  cd "$pkgbase/cli"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's|^host: ||p')"
+}
+
+build() {
+  cd "$pkgbase/cli"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release --all-features
+}
+
+package_redmi-perf-git() {
+  pkgdesc='CLI for the Xiaomi/Redmi platform performance mode'
+  depends=('glibc' 'libgcc' "${_pkgbase}-dkms-git")
+  provides=("${_pkgbase}=${pkgver}")
+  conflicts=("${_pkgbase}")
+
+  cd "$pkgbase"
+  install -Dm0755 cli/target/release/redmi-perf "$pkgdir/usr/bin/redmi-perf"
+  install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/${pkgname}/LICENSE"
+
+}
+
+package_redmi-perf-dkms-git() {
+  pkgdesc='Kernel module for the Xiaomi/Redmi platform performance mode (DKMS)'
+  depends=('dkms')
+  provides=("${_pkgbase}-dkms=${pkgver}")
+  conflicts=("${_pkgbase}-dkms")
+  install=redmi-perf-dkms-git.install
+
+  cd "$pkgbase"
+  local _src="$pkgdir/usr/src/${_pkgbase}-${pkgver}"
+  install -d "$_src"
+  install -m0644 kernel/redmi-perf-wmi/redmi_perf_wmi.c \
+    kernel/redmi-perf-wmi/Makefile "$_src/"
+  # DKMS guideline: PACKAGE_NAME = $_pkgbase, PACKAGE_VERSION = $pkgver
+  sed -e "s/^PACKAGE_NAME=.*/PACKAGE_NAME=\"${_pkgbase}\"/" \
+    -e "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"${pkgver}\"/" \
+    kernel/redmi-perf-wmi/dkms.conf >"$_src/dkms.conf"
+  install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/${pkgname}/LICENSE"
+
+  # 必须在 bitland-mifs-wmi（内核 7.3+ 自带）之前加载，否则它会把同一个
+  # MIFS WMI 设备绑走，redmi_perf_wmi 的 probe 永远不会执行。
+  install -d "$pkgdir/usr/lib/modules-load.d"
+  printf '%s\n' '# Load redmi_perf_wmi before the in-tree bitland-mifs-wmi driver' \
+    'redmi_perf_wmi' >"$pkgdir/usr/lib/modules-load.d/redmi-perf.conf"
+}

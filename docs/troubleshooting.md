@@ -1,5 +1,8 @@
 # 排错
 
+> Arch Linux 的依赖、clang 内核、驱动升级钩子和恢复流程单独整理在
+> [arch-linux.md](arch-linux.md)，先看那份更省事。
+
 ## 🔴 开不了机怎么办（nvpcf-shim 相关）
 
 `nvpcf-shim` 替换的是 NVIDIA 内核模块。装坏了会黑屏 / 无法进桌面。
@@ -29,11 +32,17 @@ sudo reboot
    mount -t sysfs /sys /mnt/sys
    chroot /mnt
 
-   # 删掉打了补丁的模块，用 DKMS 的原版
+   # 删掉打了补丁的模块（Arch 装在 updates/nvpcf-shim/，旧版在 updates/dkms/）
+   rm -f /lib/modules/$(uname -r)/updates/nvpcf-shim/nvidia*.ko.zst
    rm -f /lib/modules/$(uname -r)/updates/dkms/nvidia*.ko.zst
    rm -f /etc/modprobe.d/nvidia-nvpcf-shim.conf
+   rm -f /etc/pacman.d/hooks/90-nvpcf-shim-revert.hook
    depmod -a $(uname -r)
+
+   # Debian / Ubuntu：让 DKMS 重装官方模块
    dkms install --force nvidia/$(ls /var/lib/dkms/nvidia/ | head -1) --all
+   # Arch：重装源码包，或
+   dkms install nvidia/$(ls /var/lib/dkms/nvidia/ | head -1) -k $(uname -r) --force
 
    reboot
    ```
@@ -44,7 +53,9 @@ sudo reboot
 
 > 💡 装之前先备份一份能跑的模块，能省掉一半的麻烦：
 > ```bash
-> sudo cp -a /lib/modules/$(uname -r)/updates/dkms/nvidia*.ko.zst ~/nvidia-backup/
+> sudo mkdir -p ~/nvidia-backup
+> sudo cp -a /lib/modules/$(uname -r)/updates/dkms/nvidia*.ko.zst ~/nvidia-backup/ 2>/dev/null || true
+> sudo cp -a /lib/modules/$(uname -r)/kernel/drivers/video/nvidia*.ko.zst ~/nvidia-backup/ 2>/dev/null || true
 > ```
 
 ## 内核升级后 shim 失效
@@ -78,12 +89,12 @@ sudo dmesg | grep -i "unknown parameter"
 grep -o 'nvpcf_shim_[a-z0-9_]*' nvpcf-shim/shim_block.c | sort -u
 ```
 
-合法的默认值（595.112.07 上实测可用）：
+合法的默认值（595.112.07 / nvidia-open 620.73.04 上实测可用）：
 
 ```
 options nvidia nvpcf_shim_mode=1 nvpcf_shim_log=1 nvpcf_shim_fallback=1 \
 	nvpcf_shim_rev=0 nvpcf_shim_shift=0 nvpcf_shim_ctr0b=0 \
-	nvpcf_shim_ppm_enable=1 nvpcf_shim_ppm=0x1E01
+	nvpcf_shim_ppm_enable=1 nvpcf_shim_ppm=0x1E01 nvpcf_shim_pshare_init=1
 ```
 
 ## `PRH failed to update thermal limit!` 断言
@@ -163,7 +174,29 @@ cd nvpcf-shim
 sudo ./install.sh
 ```
 
+Arch 的 `nvidia-open-dkms` 没有这个问题，DKMS 是正常工作的；
+`nvpcf-shim` 仍然走手工编译，因为它必须改驱动源码。
+
 `redmi-perf` 的模块是干净的 DKMS 包，不受影响。
+
+## Arch：驱动升级后 shim 自动失效 / 版本错配
+
+`nvidia-open-dkms` / `nvidia-utils` 升级后，旧 shim 模块的版本号和新的
+用户态库对不上，`nvidia-smi` 会报
+`Failed to initialize NVML: Driver/library version mismatch`。
+
+`install-prebuilt.sh` 会装一个 pacman 钩子，在升级事务结束后自动回退到
+官方模块（见 `/var/log/nvpcf-shim.log`）。想继续用 shim：
+
+```bash
+cd nvpcf-shim && sudo ./install.sh
+```
+
+如果钩子没生效（比如用 `--no-hook` 装的）：
+
+```bash
+sudo ./nvpcf-shim/restore-prebuilt.sh
+```
 
 ## 怎么确认 shim 到底生效了
 

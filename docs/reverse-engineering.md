@@ -250,12 +250,44 @@ NVPCF func `0x8` 的应答里有 20 组 (u32, u32)，看着像功耗/频率点�
 推测是 (频率 kHz, 功耗 mW) 之类的点表，但**没有找到驱动解析它的代码路径**，
 暂时无法利用。
 
+## 附：nvidia-open 620 的启动顺序断言（2026-11 补）
+
+620.73.04 上，即使 GPS counter 注入全部生效，开机仍会各打一次
+`failed to get target temp / platform power mode from SBIOS`。完整 ACPI 日志显示：
+
+```
+GPS 0x20 (PSHARESTATUS) -> 01 00 00 00      # UPDATE_LIMIT = PENDING
+断言 target temp / power mode
+GPS 0x2a (PSHAREPARAMS)                     # 到这里才初始化 TGPU/PPMD 传感器
+```
+
+原因在 `pfmreqhndlrInitSensors`：它先调 `_pfmreqhndlrCallPshareStatus(bInit=TRUE)`，
+该函数看到 `PFM_REQ_HNDLR_PSHARESTATUS.UPDATE_LIMIT=PENDING`（bit0）就立即
+`_pfmreqhndlrUpdateTgpuLimit` / `_pfmreqhndlrUpdatePpmdLimit`；而 TGPU/PPMD
+计数器要等随后的 `PSHAREPARAMS` 调用才被标记可用，于是
+`pfmreqhndlrGetPerfSensorCounterById` 返回 `NV_ERR_INVALID_DATA`，两条断言必炸。
+这是「先更新、后初始化」的驱动顺序问题，跟固件数据无关。
+
+`nvpcf_shim_pshare_init=1`（默认）的处理：只在**初始化窗口**
+（看到 GPS support `0x0` 之后、首个 `PSHAREPARAMS 0x2a` 之前）把 0x20 应答里的
+`UPDATE_LIMIT pending` 位清掉，让驱动跳过这次超前更新；运行期 0x20（powerd
+每 3 秒轮询）保持原样，平台限制更新仍然生效。
+
+> **实机验证（2026-11-20）**：Arch Linux + 内核 `7.3.0-2-cachyos-cjktty` +
+> `nvidia-open-dkms 620.73.04`，安装后重启，日志只剩一次
+> `init window: PShareStatus UPDATE_LIMIT pending 0x1 -> 0x0`，
+> 两条 SBIOS 断言不再出现；PPM 注入、EC 模式切换和
+> `Current Power Limit`（balanced 90W / turbo 125W / full-speed 140W）均正常。
+
 ## 逆向工具
 
 `tools/elfrela.py` —— 解析 ELF 重定位并映射回函数，用来在
 `nv-kernel.o_binary` 里定位符号。配合 `objdump -d` 使用。
 
 ```bash
+# 完整源码树（.run / Debian）
 objdump -d /usr/src/nvidia-595.112.07/nvidia/nv-kernel.o_binary > all.asm
+# nvidia-open（Arch nvidia-open-dkms）：二进制在 kernel-open/ 下
+objdump -d /usr/src/nvidia-620.73.04/kernel-open/nvidia/nv-kernel.o_binary > all.asm
 python3 tools/elfrela.py ...
 ```

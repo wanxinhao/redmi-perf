@@ -10,7 +10,7 @@ echo "（没有输出 = 两条 SBIOS 断言都消失了）"
 
 echo
 echo "==================== 2. shim 注入点 ===================="
-sudo dmesg | grep -E "NVPCF-SHIM: (GPS|PPM)" | tail -20
+sudo dmesg | grep -E "NVPCF-SHIM: (GPS|PPM|init window)" | tail -20
 
 echo
 echo "==================== 3. GPU 功耗/温度 ===================="
@@ -18,7 +18,7 @@ nvidia-smi -q -d POWER,TEMPERATURE | grep -iE "Power Limit|Target Temperature|Ma
 
 echo
 echo "==================== 3b. shim 当前参数 ===================="
-for p in nvpcf_shim_mode nvpcf_shim_ctr0b nvpcf_shim_ppm nvpcf_shim_ppm_enable; do
+for p in nvpcf_shim_mode nvpcf_shim_ctr0b nvpcf_shim_ppm nvpcf_shim_ppm_enable nvpcf_shim_pshare_init; do
 	printf "  %-24s = %s\n" "$p" "$(cat /sys/module/nvidia/parameters/$p 2>/dev/null || echo '(不存在)')"
 done
 
